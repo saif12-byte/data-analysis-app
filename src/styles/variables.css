@@ -1,0 +1,17 @@
+/* Design tokens: change a colour here and the whole app follows. */
+:root {
+  --bg: #121214;
+  --card: #1c1c20;
+  --primary: #f97316;
+  --secondary: #38bdf8;
+  --positive: #4ade80;
+  --negative: #f87171;
+  --yellow: #facc15;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --border: #2e2e33;
+  --track: #2a2a2f;
+
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --font-serif: 'Newsreader', Georgia, serif;
+}
