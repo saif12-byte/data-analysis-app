@@ -32,6 +32,59 @@ html { scroll-behavior: smooth; }
 .page-sub { color: var(--muted); margin: 0 0 28px; max-width: 60ch; }
 #tools, #dashboard { scroll-margin-top: 24px; }
 
+/* Tool navigation and validation */
+.tool-tabs { display: flex; gap: 6px; margin-bottom: 12px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.tool-tab { padding: 9px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 0.9rem; cursor: pointer; }
+.tool-tab:hover { color: var(--text); }
+.tool-tab.is-active { background: #3b2418; color: var(--primary); font-weight: 600; }
+.validation-card { margin-bottom: 16px; }
+.validation-private, .validation-progress { color: var(--muted); font-size: 0.88rem; }
+.validation-private { margin: -4px 0 14px; }
+.validation-progress { margin: 12px 0 0; }
+.validation-rule-builder { margin-top: 20px; }
+.validation-rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.validation-rules-heading h3 { margin: 0; font-size: 1rem; }
+.validation-rules-heading p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+.validation-rule { display: grid; grid-template-columns: minmax(110px, 1.2fr) minmax(130px, 1.3fr) minmax(110px, 1fr) minmax(100px, 0.8fr) auto; align-items: end; gap: 10px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.validation-rule label { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.validation-rule label span { color: var(--muted); font-size: 0.78rem; }
+.validation-rule input, .validation-rule select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: #141416; color: var(--text); font: inherit; font-size: 0.84rem; }
+.validation-remove-rule { padding: 9px 11px; font-size: 0.84rem; }
+.validation-custom-results { padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.validation-failures-heading { margin: 18px 0 0; font-size: 0.95rem; }
+.validation-removal { margin: 20px 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: #18181b; }
+.validation-issue-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.validation-issue-groups h4 { margin: 0 0 2px; font-size: 0.9rem; }
+.validation-issue-groups.is-error h4 { color: var(--negative); }
+.validation-issue-groups.is-warning h4 { color: var(--yellow); }
+.validation-issue-groups.is-info h4 { color: var(--secondary); }
+.validation-issue-group { display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
+.validation-issue-group.is-not-removable { cursor: default; }
+.validation-issue-group:has(input:checked) { border-color: var(--primary); background: #211b16; }
+.validation-issue-group input { margin-top: 4px; accent-color: var(--primary); }
+.validation-issue-group-content { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.validation-issue-group-content strong { font-size: 0.88rem; }
+.validation-issue-group-content span { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.validation-removal-impact { margin: 14px 0 0; font-size: 0.9rem; font-weight: 600; }
+.validation-download-note { margin: 10px 0 0; color: var(--muted); font-size: 0.82rem; }
+.validation-download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.validation-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.validation-page-summary { color: var(--muted); font-size: 0.82rem; }
+.validation-page-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.validation-page-buttons .btn { padding: 7px 10px; font-size: 0.82rem; }
+.validation-page-number.is-current { border-color: var(--primary); color: var(--primary); }
+.validation-page-ellipsis { padding: 0 3px; color: var(--muted); }
+.validation-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 12px; }
+.validation-summary h3 { margin: 0; font-size: 1rem; }
+.validation-summary p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+.validation-status { padding: 6px 10px; border: 1px solid var(--positive); border-radius: 999px; color: var(--positive); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.validation-status.has-issues { border-color: var(--yellow); color: var(--yellow); }
+.validation-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.validation-metric { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.validation-metric span { color: var(--muted); font-size: 0.8rem; }
+.validation-metric strong { font-size: 1.25rem; }
+.validation-table { min-width: 520px; }
+
 /* Data guide */
 .guide { position: sticky; top: 24px; margin: 48px 0 24px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
 .guide-heading { display: flex; align-items: center; gap: 11px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
@@ -113,6 +166,15 @@ th { color: var(--muted); font-weight: 500; }
   .content-layout { display: flex; flex-direction: column; width: calc(100% - 36px); gap: 0; }
   .page { width: 100%; padding: 34px 0 20px; }
   .guide { position: static; width: 100%; margin: 0 0 32px; }
+  .tool-tab { padding: 8px 10px; font-size: 0.82rem; }
+  .validation-metrics { grid-template-columns: 1fr; }
+  .validation-summary { align-items: flex-start; flex-direction: column; }
+  .validation-rule { grid-template-columns: 1fr 1fr; }
+  .validation-rule label { grid-column: span 1; }
+  .validation-remove-rule { justify-self: start; }
+  .validation-rules-heading { align-items: flex-start; }
+  .validation-pagination { align-items: flex-start; flex-direction: column; }
+  .validation-page-buttons { justify-content: flex-start; }
   .site-footer { grid-template-columns: 1fr auto; gap: 8px 16px; padding: 18px; }
   .site-footer p { grid-column: 1; }
   .footer-note { grid-column: 1 / -1; grid-row: auto; }

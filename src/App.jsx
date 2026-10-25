@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Dashboard from './features/dashboard/Dashboard';
+import DataValidation from './features/validation/DataValidation';
 import UploadBox from './features/upload/UploadBox';
 
 const startingSuggestions = [
@@ -93,6 +94,7 @@ function DataGuide({ hasAnalysis }) {
 export default function App() {
   const [analysis, setAnalysis] = useState(null);
   const [accountNotice, setAccountNotice] = useState('');
+  const [activeTool, setActiveTool] = useState('upload');
 
   return (
     <div className="app-shell">
@@ -124,7 +126,36 @@ export default function App() {
             </p>
           </section>
           <section id="tools" aria-label="Data analysis tools">
-            <UploadBox onResult={setAnalysis} />
+            <div className="tool-tabs" role="tablist" aria-label="Data tools">
+              <button
+                id="upload-tab"
+                className={`tool-tab ${activeTool === 'upload' ? 'is-active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={activeTool === 'upload'}
+                aria-controls="upload-panel"
+                onClick={() => setActiveTool('upload')}
+              >
+                Upload &amp; analyse
+              </button>
+              <button
+                id="validation-tab"
+                className={`tool-tab ${activeTool === 'validation' ? 'is-active' : ''}`}
+                type="button"
+                role="tab"
+                aria-selected={activeTool === 'validation'}
+                aria-controls="validation-panel"
+                onClick={() => setActiveTool('validation')}
+              >
+                Data validation
+              </button>
+            </div>
+            <div id="upload-panel" role="tabpanel" aria-labelledby="upload-tab" hidden={activeTool !== 'upload'}>
+              <UploadBox onResult={setAnalysis} />
+            </div>
+            <div id="validation-panel" role="tabpanel" aria-labelledby="validation-tab" hidden={activeTool !== 'validation'}>
+              <DataValidation />
+            </div>
           </section>
           <section id="dashboard" aria-label="Data overview">
             <Dashboard data={analysis ?? undefined} isSample={!analysis} />
@@ -135,7 +166,7 @@ export default function App() {
       <footer className="site-footer">
         <a className="footer-brand" href="#">data<span>story</span></a>
         <p>Make better sense of your data.</p>
-        <span className="footer-note">Private by design · Your CSV stays in your browser</span>
+        <span className="footer-note">Files are processed in memory and not saved</span>
         <a className="back-to-top" href="#">Back to top ↑</a>
       </footer>
     </div>
