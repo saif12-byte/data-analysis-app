@@ -1,6 +1,16 @@
 import Papa from 'papaparse';
 
 export const MAX_VALIDATION_ROWS = 150_000;
+export const ISSUE_ROWS_PAGE_SIZE = 50;
+
+export function formatIssueSamples(samples = []) {
+  if (!samples.length) return 'None';
+  return samples.map(({ rowNumber, values = {} }) => {
+    const entries = Object.entries(values)
+      .map(([column, value]) => `${column}: ${value || '(empty)'}`);
+    return `row ${rowNumber}${entries.length ? ` (${entries.join('; ')})` : ''}`;
+  }).join(' · ');
+}
 
 export function readCsvColumns(file) {
   return new Promise((resolve, reject) => {

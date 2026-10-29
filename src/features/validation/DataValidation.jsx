@@ -1,14 +1,17 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Card from '../../components/Card';
 import { ALLOWED_EXTENSIONS, MAX_SIZE_MB } from '../upload/config';
 import {
   downloadCleanedDataset,
   downloadValidationReport,
+  fetchIssueGroupRows,
   previewCleanedDataset,
   validateDataset,
 } from '../../services/api';
 import {
   MAX_VALIDATION_ROWS,
+  ISSUE_ROWS_PAGE_SIZE,
+  formatIssueSamples,
   readCsvColumns,
   validateCsvFile,
 } from './validation';
@@ -118,6 +121,108 @@ function PaginatedTable({ headers, rows, label }) {
         </nav>
       )}
     </>
+  );
+}
+
+function IssueGroupRows({ file, rules, csvIssues, group }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setResult(null);
+    setError('');
+    fetchIssueGroupRows(file, rules, csvIssues, group.id, page, ISSUE_ROWS_PAGE_SIZE)
+      .then((rows) => {
+        if (!cancelled) setResult(rows);
+      })
+      .catch((requestError) => {
+        if (!cancelled) setError(requestError.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [csvIssues, file, group.id, isOpen, page, rules]);
+
+  const pageCount = Math.max(1, Math.ceil((result?.totalRows ?? 0) / ISSUE_ROWS_PAGE_SIZE));
+  const valueText = (values) => Object.entries(values ?? {})
+    .map(([column, value]) => `${column}: ${value || '(empty)'}`)
+    .join('; ');
+
+  return (
+    <div className="validation-issue-row-browser">
+      <button
+        className="btn btn-ghost"
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
+      >
+        {isOpen ? 'Hide affected rows' : 'View affected rows'}
+      </button>
+      {isOpen && (
+        <div className="validation-issue-row-content">
+          {loading && <p role="status">Loading rows…</p>}
+          {error && <p className="msg-error" role="alert">{error}</p>}
+          {result && !loading && (
+            <>
+              {result.rows.length ? (
+                <div className="table-wrap">
+                  <table className="validation-table">
+                    <thead>
+                      <tr><th>Spreadsheet row</th><th>Values</th><th>Issues</th></tr>
+                    </thead>
+                    <tbody>
+                      {result.rows.map((row) => (
+                        <tr key={row.rowNumber}>
+                          <td>{row.rowNumber}</td>
+                          <td>{valueText(row.values)}</td>
+                          <td>{row.issues.map((issue) => issue.description).join('; ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p>No affected spreadsheet rows are available for this group.</p>
+              )}
+              {result.totalRows > ISSUE_ROWS_PAGE_SIZE && (
+                <nav className="validation-pagination" aria-label={`${group.label} affected rows pages`}>
+                  <span className="validation-page-summary">
+                    Page {page.toLocaleString()} of {pageCount.toLocaleString()} · {result.totalRows.toLocaleString()} rows
+                  </span>
+                  <div className="validation-page-buttons">
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => setPage((current) => current - 1)}
+                      disabled={page <= 1 || loading}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => setPage((current) => current + 1)}
+                      disabled={page >= pageCount || loading}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </nav>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -429,31 +534,58 @@ export default function DataValidation() {
                       <span className="validation-issue-group-content">
                         <strong>{group.label}</strong>
                         <span>{group.affectedRows.toLocaleString()} matching rows</span>
-                        <span>Sample spreadsheet rows: {group.sampleRows.join(', ') || 'None'}</span>
+                        <span>Samples: {formatIssueSamples(group.samples)}</span>
                       </span>
+                      {group.affectedRows > 0 && (
+                        <IssueGroupRows
+                          file={file}
+                          rules={rules}
+                          csvIssues={report.automatic.csvIssues}
+                          group={group}
+                        />
+                      )}
                     </div>
                   ))}
                   {groups.filter((group) => group.canRemove).map((group) => (
-                    <label className="validation-issue-group" key={group.id}>
-                      <input
-                        type="checkbox"
-                        checked={selectedGroups.includes(group.id)}
-                        onChange={(event) => changeGroupSelection(group.id, event.target.checked)}
-                      />
-                      <span className="validation-issue-group-content">
-                        <strong>{group.label}</strong>
-                        <span>{group.affectedRows.toLocaleString()} affected rows · {group.issueCount.toLocaleString()} issues</span>
-                        <span>Sample spreadsheet rows: {group.sampleRows.join(', ') || 'None'}</span>
-                      </span>
-                    </label>
+                    <div className="validation-issue-group-wrap" key={group.id}>
+                      <label className="validation-issue-group">
+                        <input
+                          type="checkbox"
+                          checked={selectedGroups.includes(group.id)}
+                          onChange={(event) => changeGroupSelection(group.id, event.target.checked)}
+                        />
+                        <span className="validation-issue-group-content">
+                          <strong>{group.label}</strong>
+                          <span>{group.affectedRows.toLocaleString()} affected rows · {group.issueCount.toLocaleString()} issues</span>
+                          <span>Samples: {formatIssueSamples(group.samples)}</span>
+                        </span>
+                      </label>
+                      {group.affectedRows > 0 && (
+                        <IssueGroupRows
+                          file={file}
+                          rules={rules}
+                          csvIssues={report.automatic.csvIssues}
+                          group={group}
+                        />
+                      )}
+                    </div>
                   ))}
                   {groups.filter((group) => severity !== 'info' && !group.canRemove).map((group) => (
                     <div className="validation-issue-group is-not-removable" key={group.id}>
                       <span className="validation-issue-group-content">
                         <strong>{group.label}</strong>
-                        <span>{group.issueCount.toLocaleString()} parsing issue(s) found{group.sampleRows.length ? ` · sample spreadsheet rows: ${group.sampleRows.join(', ')}` : ''}</span>
+                        <span>{group.issueCount.toLocaleString()} parsing issue(s) found</span>
+                        <span>Samples: {formatIssueSamples(group.samples)}</span>
                         <span>Repair the CSV structure and upload it again; these rows cannot be safely removed automatically.</span>
                       </span>
+                      {group.affectedRows > 0 && (
+                        <IssueGroupRows
+                          file={file}
+                          rules={rules}
+                          csvIssues={report.automatic.csvIssues}
+                          group={group}
+                        />
+                      )}
                     </div>
                   ))}
                 </section>
@@ -534,29 +666,6 @@ export default function DataValidation() {
                 ],
               }))}
             />
-            {report.custom.failedRows.length > 0 && (
-              <>
-                <h4 className="validation-failures-heading">Rows that need review</h4>
-                <PaginatedTable
-                  key={`${report.id}-failures`}
-                  label="Failing rows pages"
-                  headers={['Row', 'Column', 'Actual value', 'Issue', 'Severity']}
-                  rows={report.custom.failedRows.flatMap((failedRow) => failedRow.reasons.map((reason) => ({
-                    key: `${failedRow.rowNumber}-${reason.ruleId}`,
-                    cells: [
-                      failedRow.rowNumber,
-                      reason.column,
-                      reason.actual || '(empty)',
-                      `${conditionLabel(reason.condition)}${!valueNotRequired.has(reason.condition) ? ` ${reason.expected}` : ''}`,
-                      reason.severity,
-                    ],
-                  })))}
-                />
-                {report.custom.failedRowsTruncated && (
-                  <p className="validation-progress">Showing the first 1,000 failing rows. Counts include all rows.</p>
-                )}
-              </>
-            )}
           </div>
           <div className="validation-summary">
             <div>

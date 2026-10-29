@@ -51,7 +51,6 @@ html { scroll-behavior: smooth; }
 .validation-rule input, .validation-rule select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: #141416; color: var(--text); font: inherit; font-size: 0.84rem; }
 .validation-remove-rule { padding: 9px 11px; font-size: 0.84rem; }
 .validation-custom-results { padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.validation-failures-heading { margin: 18px 0 0; font-size: 0.95rem; }
 .validation-removal { margin: 20px 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: #18181b; }
 .validation-issue-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .validation-issue-groups h4 { margin: 0 0 2px; font-size: 0.9rem; }
@@ -65,6 +64,11 @@ html { scroll-behavior: smooth; }
 .validation-issue-group-content { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .validation-issue-group-content strong { font-size: 0.88rem; }
 .validation-issue-group-content span { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.validation-issue-group-wrap { display: flex; flex-direction: column; gap: 8px; }
+.validation-issue-group:has(.validation-issue-row-browser) { flex-direction: column; }
+.validation-issue-row-browser { width: 100%; }
+.validation-issue-row-content { margin-top: 8px; }
+.validation-issue-row-content p { margin: 6px 0; font-size: 0.84rem; }
 .validation-removal-impact { margin: 14px 0 0; font-size: 0.9rem; font-weight: 600; }
 .validation-download-note { margin: 10px 0 0; color: var(--muted); font-size: 0.82rem; }
 .validation-download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
