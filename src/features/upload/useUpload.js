@@ -39,11 +39,11 @@ export function useUpload(onResult) {
     }
   }
 
-  async function analyse() {
+  async function analyse(options) {
     setStatus('uploading');
     setError('');
     try {
-      onResult?.(await uploadDataset(file));
+      onResult?.(await uploadDataset(file, options), { file, options });
       setStatus('done');
     } catch (e) {
       setStatus('error');

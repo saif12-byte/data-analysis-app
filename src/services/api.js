@@ -1,9 +1,10 @@
 // The only file that talks to the backend. If the API changes, edit here.
 const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
-export async function uploadDataset(file) {
+export async function uploadDataset(file, options = {}) {
   const body = new FormData();
   body.append('file', file);
+  Object.entries(options).forEach(([key, value]) => body.append(key, value));
 
   let response;
   try {
@@ -14,6 +15,68 @@ export async function uploadDataset(file) {
 
   if (!response.ok) {
     let detail = `Upload failed (status ${response.status}).`;
+    try {
+      const payload = await response.json();
+      if (payload.detail) detail = payload.detail;
+    } catch {
+      // Keep the HTTP status as the useful error when the server has no JSON response.
+    }
+    throw new Error(detail);
+  }
+
+  return response.json();
+}
+
+async function requestDatasetInsights(datasetId, method) {
+  const endpoint = method === 'POST'
+    ? `/api/datasets/${encodeURIComponent(datasetId)}/ai/insights`
+    : `/api/datasets/${encodeURIComponent(datasetId)}/insights`;
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${endpoint}`, { method });
+  } catch {
+    throw new Error('Could not reach the insights server. Start it with: npm run backend');
+  }
+
+  if (!response.ok) {
+    let detail = `Could not load insights (status ${response.status}).`;
+    try {
+      const payload = await response.json();
+      if (payload.detail) detail = payload.detail;
+    } catch {
+      // Keep the HTTP status as the useful error when the server has no JSON response.
+    }
+    throw new Error(detail);
+  }
+
+  return response.json();
+}
+
+export function getDatasetInsights(datasetId) {
+  return requestDatasetInsights(datasetId, 'GET');
+}
+
+export function generateDatasetAIInsights(datasetId) {
+  return requestDatasetInsights(datasetId, 'POST');
+}
+
+export async function askDatasetQuestion(datasetId, question) {
+  let response;
+  try {
+    response = await fetch(
+      `${BASE_URL}/api/datasets/${encodeURIComponent(datasetId)}/questions`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      },
+    );
+  } catch {
+    throw new Error('Could not reach the analysis server. Start it with: npm run backend');
+  }
+
+  if (!response.ok) {
+    let detail = `Could not answer the question (status ${response.status}).`;
     try {
       const payload = await response.json();
       if (payload.detail) detail = payload.detail;

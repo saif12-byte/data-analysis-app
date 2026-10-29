@@ -19,6 +19,16 @@ The `data` directory is the Python virtual environment. Python application code 
 dependency declarations live in `backend/`; do not move source files into the
 virtual environment because it is generated and can be recreated.
 
+For Gemini-powered insights, add `GEMINI_API_KEY` with a Google AI Studio API key
+to `backend/.env` (use `backend/.env.example` as a reference; do not overwrite
+an existing `.env`). Set `AI_ENABLED=true` to enable the optional AI feature.
+The key stays on the backend and is never sent to or stored in the browser.
+`GEMINI_MODEL` defaults to `gemini-2.5-flash`,
+`GEMINI_FALLBACK_MODEL` defaults to `gemini-2.5-flash-lite`,
+`AI_DAILY_CAP` defaults to 100 requests, and `GEMINI_TIMEOUT_MS` defaults to
+20,000 milliseconds. AI is opt-in in the Insights panel. Missing keys,
+disabled AI, service errors, and rate limits leave rule-based findings available.
+
 ## Run the app
 
 Open two terminals at the project root:
@@ -38,6 +48,34 @@ available at `/api/health`.
 CSV files are previewed in the browser and analysed by the Python API. Uploads
 are limited to 25 MB and the original upload is processed in memory; the backend
 does not save or modify it.
+
+Run the backend tests from the project root after installing the development
+requirements:
+
+```powershell
+.\data\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
+.\data\Scripts\python.exe -m pytest backend\tests
+```
+
+Before analysis, users can choose the measure column, aggregation (sum, average,
+median, minimum, maximum, or count), date and group columns, and chart styles
+(area, line, bar, or pie). The Insights panel computes statistics, category
+shares, monthly trends, correlations, and outlier counts with Pandas. The compact
+insight pack is held in a bounded in-memory registry (the latest 20 uploads) for
+the current server process; a restart clears it. Personal-data-looking columns
+are excluded, and original CSV rows are never sent to Gemini. Gemini receives
+only that aggregate pack and may describe only numbers present in it. The user
+must opt in before generating AI findings. The AI cache and daily request
+counter are also in-process; multi-worker deployments need a shared store if
+those limits must apply across workers. Gemini processing is subject to Google's
+API terms and data handling.
+
+The Insights panel also accepts simple questions that mention CSV column names,
+such as "How many indexes have the same first name, grouped by country?" The
+backend resolves the mentioned columns and calculates grouped counts, sums,
+averages, medians, minima, or maxima with Pandas. These question answers are
+computed directly and are not sent to Gemini. Compressed CSVs are kept in memory
+for questions on the latest three uploads and are cleared when the backend stops.
 
 The Data validation tool supports CSV files with up to 150,000 data rows for
 browser-based checks of missing values, duplicate rows, CSV row issues, and

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Dashboard from './features/dashboard/Dashboard';
 import DataValidation from './features/validation/DataValidation';
 import UploadBox from './features/upload/UploadBox';
+import InsightsPanel from './features/insights/InsightsPanel';
 
 const startingSuggestions = [
   'How do I get started?',
@@ -96,6 +97,10 @@ export default function App() {
   const [accountNotice, setAccountNotice] = useState('');
   const [activeTool, setActiveTool] = useState('upload');
 
+  function handleAnalysis(result) {
+    setAnalysis(result);
+  }
+
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -151,7 +156,7 @@ export default function App() {
               </button>
             </div>
             <div id="upload-panel" role="tabpanel" aria-labelledby="upload-tab" hidden={activeTool !== 'upload'}>
-              <UploadBox onResult={setAnalysis} />
+              <UploadBox onResult={handleAnalysis} />
             </div>
             <div id="validation-panel" role="tabpanel" aria-labelledby="validation-tab" hidden={activeTool !== 'validation'}>
               <DataValidation />
@@ -159,6 +164,9 @@ export default function App() {
           </section>
           <section id="dashboard" aria-label="Data overview">
             <Dashboard data={analysis ?? undefined} isSample={!analysis} />
+          </section>
+          <section aria-label="Dataset insights">
+            <InsightsPanel datasetId={analysis?.dataset_id} />
           </section>
         </main>
         <DataGuide hasAnalysis={Boolean(analysis)} />

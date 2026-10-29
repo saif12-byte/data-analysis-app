@@ -1,19 +1,31 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import os
 from pathlib import Path
 import re
 import tempfile
 import time
 from io import BytesIO
+from hashlib import sha256
 
+from dotenv import load_dotenv
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+from .services.ai.gemini import generate_ai_insights
+from .services.insights import (
+    answer_dataset_question,
+    build_insight_pack,
+    get_dataset_csv,
+    get_insight_pack,
+    store_insight_pack,
+)
 from .validation import (
     MAX_FILE_SIZE,
     _log_validation_timing,
@@ -25,11 +37,51 @@ from .validation import (
     selected_row_indexes,
 )
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 COLORS = ["var(--primary)", "var(--secondary)", "var(--yellow)", "var(--muted)"]
 VALUE_COLUMN_PRIORITY = re.compile(
     r"revenue|sales|amount|price|total|value|cost|quantity|qty", re.IGNORECASE
 )
 DATE_COLUMN_HINT = re.compile(r"date|time|month|day", re.IGNORECASE)
+AGGREGATIONS = {"sum", "mean", "median", "min", "max", "count"}
+CHART_TYPES = {"line", "area", "bar"}
+
+
+class DatasetQuestionRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+
+
+def _numeric_values(dataframe: pd.DataFrame, column: str) -> pd.Series:
+    return pd.to_numeric(
+        dataframe[column]
+        .astype("string")
+        .str.strip()
+        .str.replace(r"[,\s₹$€£%]", "", regex=True),
+        errors="coerce",
+    )
+
+
+def _aggregate(values: pd.Series, aggregation: str) -> int | float:
+    if aggregation == "count":
+        return int(values.count())
+    valid_values = values.dropna()
+    if valid_values.empty:
+        return 0
+    result = getattr(valid_values, aggregation)()
+    return float(result)
+
+
+def _resolve_column(
+    requested: str, columns: list[str], fallback: str | None, label: str
+) -> str | None:
+    if requested == "auto":
+        return fallback
+    if requested == "none":
+        return None
+    if requested not in columns:
+        raise HTTPException(status_code=400, detail=f"Unknown {label} column.")
+    return requested
 
 app = FastAPI(title="Data Analysis API", version="1.0.0")
 allowed_origins = [
@@ -51,6 +103,66 @@ app.add_middleware(
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/datasets/{dataset_id}/insights")
+def get_dataset_insights(dataset_id: str) -> dict:
+    record = get_insight_pack(dataset_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset insights were not found. Upload the CSV again.")
+    _, pack = record
+    feature_enabled = os.getenv("AI_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    key_configured = bool(os.getenv("GEMINI_API_KEY", "").strip())
+    return {
+        "dataset_id": dataset_id,
+        "pack": pack,
+        "ai_feature_enabled": feature_enabled,
+        "ai_key_configured": key_configured,
+        "ai_enabled": feature_enabled and key_configured,
+    }
+
+
+@app.post("/api/datasets/{dataset_id}/ai/insights")
+async def generate_dataset_ai_insights(dataset_id: str) -> dict:
+    record = get_insight_pack(dataset_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset insights were not found. Upload the CSV again.")
+    data_hash, pack = record
+    return await generate_ai_insights(dataset_id, data_hash, pack)
+
+
+@app.post("/api/datasets/{dataset_id}/questions")
+def ask_dataset_question(
+    dataset_id: str, request: DatasetQuestionRequest
+) -> dict:
+    if get_insight_pack(dataset_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Dataset was not found. Upload and analyse the CSV again.",
+        )
+    compressed_csv = get_dataset_csv(dataset_id)
+    if compressed_csv is None:
+        raise HTTPException(
+            status_code=410,
+            detail="The dataset is no longer available for questions. Upload it again.",
+        )
+    try:
+        dataframe = pd.read_csv(BytesIO(gzip.decompress(compressed_csv)), encoding="utf-8-sig")
+        dataframe = dataframe.dropna(how="all")
+        result = answer_dataset_question(dataframe, request.question)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (OSError, EOFError, UnicodeDecodeError, pd.errors.ParserError) as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not read the temporary dataset for this question.",
+        ) from error
+    return result
 
 
 def _safe_csv_download_stem(filename: str | None) -> str:
@@ -198,7 +310,15 @@ async def download_validation_report(
 
 
 @app.post("/api/upload")
-async def upload_csv(file: UploadFile = File(...)) -> dict:
+async def upload_csv(
+    file: UploadFile = File(...),
+    measure_column: str = Form("auto"),
+    date_column: str = Form("auto"),
+    group_column: str = Form("auto"),
+    aggregation: str = Form("sum"),
+    trend_chart: str = Form("area"),
+    category_chart: str = Form("bar"),
+) -> dict:
     if Path(file.filename or "").suffix.lower() != ".csv":
         raise HTTPException(status_code=415, detail="Upload a .csv file.")
 
@@ -223,21 +343,9 @@ async def upload_csv(file: UploadFile = File(...)) -> dict:
     if dataframe.empty:
         raise HTTPException(status_code=400, detail="This CSV has column names but no data rows.")
 
-    date_column = None
-    date_values = None
-    for column in columns:
-        if DATE_COLUMN_HINT.search(column):
-            parsed_dates = pd.to_datetime(dataframe[column], errors="coerce")
-            if parsed_dates.notna().any():
-                date_column = column
-                date_values = parsed_dates
-                break
-
     numeric_columns: list[tuple[str, pd.Series]] = []
     for column in columns:
-        text_values = dataframe[column].astype("string").str.strip()
-        normalized = text_values.str.replace(r"[,\s₹$€£%]", "", regex=True)
-        values = pd.to_numeric(normalized, errors="coerce").dropna()
+        values = _numeric_values(dataframe, column).dropna()
         if not values.empty:
             numeric_columns.append((column, values))
 
@@ -245,141 +353,159 @@ async def upload_csv(file: UploadFile = File(...)) -> dict:
         key=lambda item: bool(VALUE_COLUMN_PRIORITY.search(item[0])),
         reverse=True,
     )
-    primary_numeric = numeric_columns[0] if numeric_columns else None
-    categorical_column = next(
+    auto_numeric = numeric_columns[0] if numeric_columns else None
+    primary_numeric = _resolve_column(
+        measure_column,
+        columns,
+        auto_numeric[0] if auto_numeric else None,
+        "measure",
+    )
+    if primary_numeric:
+        numeric_values = _numeric_values(dataframe, primary_numeric)
+        if not numeric_values.notna().any():
+            raise HTTPException(
+                status_code=400,
+                detail=f"The selected measure column '{primary_numeric}' has no numeric values.",
+            )
+    else:
+        numeric_values = pd.Series(1, index=dataframe.index, dtype="int64")
+
+    auto_date_column = None
+    for column in columns:
+        if DATE_COLUMN_HINT.search(column):
+            parsed_dates = pd.to_datetime(dataframe[column], errors="coerce")
+            if parsed_dates.notna().any():
+                auto_date_column = column
+                break
+    selected_date_column = _resolve_column(
+        date_column, columns, auto_date_column, "date"
+    )
+    selected_date_values = (
+        pd.to_datetime(dataframe[selected_date_column], errors="coerce")
+        if selected_date_column
+        else None
+    )
+    if selected_date_column and not selected_date_values.notna().any():
+        raise HTTPException(
+            status_code=400,
+            detail=f"The selected date column '{selected_date_column}' has no valid dates.",
+        )
+
+    auto_group_column = next(
         (
             column
             for column in columns
-            if column != date_column
-            and not any(numeric_column == column for numeric_column, _ in numeric_columns)
+            if column != auto_date_column
+            and column != (auto_numeric[0] if auto_numeric else None)
+            and column not in [numeric_column for numeric_column, _ in numeric_columns]
         ),
         None,
     )
+    categorical_column = _resolve_column(
+        group_column, columns, auto_group_column, "group"
+    )
+    if aggregation not in AGGREGATIONS:
+        raise HTTPException(status_code=400, detail="Choose a supported aggregation.")
+    if trend_chart not in CHART_TYPES:
+        raise HTTPException(status_code=400, detail="Choose a supported trend chart.")
+    if category_chart not in {"bar", "pie"}:
+        raise HTTPException(status_code=400, detail="Choose a supported group chart.")
 
-    category_totals: dict[str, float] = {}
+    category_totals: dict[str, int | float] = {}
     if categorical_column:
-        for index, value in dataframe[categorical_column].items():
-            name = str(value).strip() if pd.notna(value) else ""
-            name = name or "(blank)"
-            amount = (
-                pd.to_numeric(
-                    str(dataframe.at[index, primary_numeric[0]])
-                    .strip()
-                    .replace(",", "")
-                    .replace("₹", "")
-                    .replace("$", "")
-                    .replace("€", "")
-                    .replace("£", "")
-                    .replace("%", ""),
-                    errors="coerce",
-                )
-                if primary_numeric
-                else 1
-            )
-            if pd.notna(amount):
-                category_totals[name] = category_totals.get(name, 0.0) + float(amount)
+        group_values = dataframe[categorical_column].astype("string").fillna("(blank)")
+        grouped_values = pd.DataFrame(
+            {"group": group_values, "value": numeric_values}
+        ).groupby("group", dropna=False)["value"]
+        category_totals = {
+            str(name): _aggregate(values, aggregation)
+            for name, values in grouped_values
+        }
+    else:
+        category_totals = {
+            "All rows": _aggregate(numeric_values, aggregation)
+        }
 
-    top_categories = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)[:6]
-    category_total = sum(value for _, value in top_categories)
+    top_categories = sorted(
+        category_totals.items(), key=lambda item: abs(item[1]), reverse=True
+    )[:12]
+    category_total = sum(abs(value) for _, value in top_categories)
     categories = []
-    assigned_share = 0
     for index, (name, value) in enumerate(top_categories):
-        share = (
-            100 - assigned_share
-            if index == len(top_categories) - 1
-            else round(value / category_total * 100)
-            if category_total
-            else 0
+        categories.append(
+            {
+                "name": name,
+                "value": value,
+                "share": round(abs(value) / category_total * 100) if category_total else 0,
+                "color": COLORS[index % len(COLORS)],
+            }
         )
-        assigned_share += share
-        categories.append({"name": name, "share": share, "color": COLORS[index % len(COLORS)]})
     if not categories:
-        categories = [{"name": "All rows", "share": 100, "color": COLORS[0]}]
+        categories = [{"name": "All rows", "value": 0, "share": 100, "color": COLORS[0]}]
 
     rows_count = len(dataframe)
-    stats = []
-    if primary_numeric:
-        numeric_name, values = primary_numeric
-        total = float(values.sum())
-        stats = [
-            {
-                "id": "rows",
-                "label": "Rows analysed",
-                "value": rows_count,
-                "format": "number",
-                "detail": "Records in your file",
-            },
-            {
-                "id": "total",
-                "label": f"Total {numeric_name}",
-                "value": total,
-                "format": "number",
-                "detail": f"{len(values)} numeric values",
-            },
-            {
-                "id": "average",
-                "label": f"Average {numeric_name}",
-                "value": float(values.mean()),
-                "format": "number",
-                "detail": "Per numeric value",
-            },
-            {
-                "id": "maximum",
-                "label": f"Highest {numeric_name}",
-                "value": float(values.max()),
-                "format": "number",
-                "detail": "Largest value found",
-            },
-        ]
-    else:
-        stats = [
-            {
-                "id": "rows",
-                "label": "Rows analysed",
-                "value": rows_count,
-                "format": "number",
-                "detail": "Records in your file",
-            },
-            {
-                "id": "columns",
-                "label": "Columns",
-                "value": len(columns),
-                "format": "number",
-                "detail": "Fields in your file",
-            },
-            {
-                "id": "categories",
-                "label": "Categories",
-                "value": len(category_totals),
-                "format": "number",
-                "detail": categorical_column or "Distinct values",
-            },
-            {
-                "id": "values",
-                "label": "Data points",
-                "value": rows_count * len(columns),
-                "format": "number",
-                "detail": "Values across all rows",
-            },
-        ]
+    measure_name = primary_numeric or "Rows"
+    valid_numeric_values = numeric_values.dropna()
+    stats = [
+        {
+            "id": "rows",
+            "label": "Rows analysed",
+            "value": rows_count,
+            "format": "number",
+            "detail": "Records in your file",
+        },
+        {
+            "id": "total",
+            "label": f"Total {measure_name}",
+            "value": float(valid_numeric_values.sum()),
+            "format": "number",
+            "detail": f"{len(valid_numeric_values)} numeric values",
+        },
+        {
+            "id": "average",
+            "label": f"Average {measure_name}",
+            "value": float(valid_numeric_values.mean()) if not valid_numeric_values.empty else 0,
+            "format": "number",
+            "detail": "Per numeric value",
+        },
+        {
+            "id": "maximum",
+            "label": f"Highest {measure_name}",
+            "value": float(valid_numeric_values.max()) if not valid_numeric_values.empty else 0,
+            "format": "number",
+            "detail": "Largest value found",
+        },
+    ]
 
-    trend = _build_trend(dataframe, date_column, date_values, primary_numeric)
+    trend = _build_trend(
+        dataframe,
+        selected_date_column,
+        selected_date_values,
+        numeric_values,
+        aggregation,
+    )
+    insight_pack = build_insight_pack(dataframe)
+    dataset_id = store_insight_pack(
+        sha256(contents).hexdigest(), insight_pack, contents
+    )
     filename = Path(file.filename or "upload.csv").name
-    value_name = primary_numeric[0] if primary_numeric else "Rows"
+    value_name = primary_numeric or "Rows"
     return {
+        "dataset_id": dataset_id,
         "subtitle": f"{filename} · {rows_count:,} rows",
         "stats": stats,
         "trend": trend,
-        "trendTitle": f"Trend · {value_name}",
+        "trendTitle": f"{aggregation.title()} · {value_name} over time",
         "trendSubtitle": (
-            f"Grouped by {'date' if date_column else 'row'} · "
-            f"{primary_numeric[0] if primary_numeric else 'Record count'}"
+            f"Grouped by {selected_date_column or 'row order'} · {value_name}"
         ),
         "trendValueLabel": value_name,
         "trendFormat": "number",
+        "trendChart": trend_chart,
         "categories": categories,
-        "categoryTitle": f"By {categorical_column}" if categorical_column else "Row distribution",
-        "categorySubtitle": f"Share of {primary_numeric[0] if primary_numeric else 'records'}",
+        "categoryTitle": f"{aggregation.title()} by {categorical_column or 'group'}",
+        "categorySubtitle": f"{value_name} · top {len(categories)} groups",
+        "categoryChart": category_chart,
     }
 
 
@@ -387,27 +513,17 @@ def _build_trend(
     dataframe: pd.DataFrame,
     date_column: str | None,
     date_values: pd.Series | None,
-    primary_numeric: tuple[str, pd.Series] | None,
+    numeric_values: pd.Series,
+    aggregation: str,
 ) -> list[dict[str, int | float | str]]:
     if date_column and date_values is not None:
-        trend_frame = pd.DataFrame({"date": date_values})
-        if primary_numeric:
-            column = primary_numeric[0]
-            trend_frame["value"] = pd.to_numeric(
-                dataframe[column]
-                .astype("string")
-                .str.strip()
-                .str.replace(r"[,\s₹$€£%]", "", regex=True),
-                errors="coerce",
-            )
-        else:
-            trend_frame["value"] = 1
+        trend_frame = pd.DataFrame({"date": date_values, "value": numeric_values})
         trend_frame = trend_frame.dropna(subset=["date", "value"])
         if not trend_frame.empty:
             trend_frame["period"] = trend_frame["date"].dt.to_period("M")
-            grouped = trend_frame.groupby("period", sort=True)["value"].sum()
+            grouped = trend_frame.groupby("period", sort=True)["value"].agg(aggregation)
             return [
-                {"month": period.strftime("%b %y"), "revenue": float(value)}
+                {"month": period.strftime("%b %y"), "value": float(value)}
                 for period, value in grouped.items()
             ]
 
@@ -415,20 +531,8 @@ def _build_trend(
     bucket_size = max(1, (row_count + 7) // 8)
     trend = []
     for start in range(0, row_count, bucket_size):
-        group = dataframe.iloc[start : start + bucket_size]
-        if primary_numeric:
-            column = primary_numeric[0]
-            values = pd.to_numeric(
-                group[column]
-                .astype("string")
-                .str.strip()
-                .str.replace(r"[,\s₹$€£%]", "", regex=True),
-                errors="coerce",
-            ).dropna()
-            value = float(values.sum())
-        else:
-            value = int(len(group))
-        end = start + len(group)
+        group_values = numeric_values.iloc[start : start + bucket_size]
+        end = start + len(group_values)
         label = f"Row {start + 1}" if row_count <= 8 else f"Rows {start + 1}–{end}"
-        trend.append({"month": label, "revenue": value})
+        trend.append({"month": label, "value": _aggregate(group_values, aggregation)})
     return trend

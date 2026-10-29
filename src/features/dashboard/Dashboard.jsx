@@ -26,6 +26,7 @@ export default function Dashboard({ data = sampleData, isSample = true }) {
             data={data.trend}
             valueLabel={data.trendValueLabel ?? 'Revenue'}
             valueFormat={data.trendFormat ?? 'lakh'}
+            chartType={data.trendChart ?? 'area'}
           />
         </Card>
         <Card
@@ -33,7 +34,11 @@ export default function Dashboard({ data = sampleData, isSample = true }) {
           title={data.categoryTitle ?? 'Category performance'}
           subtitle={data.categorySubtitle ?? (isSample ? 'Share of sample revenue' : 'Share of revenue')}
         >
-          <CategoryBars items={data.categories} />
+          <CategoryBars
+            items={data.categories}
+            chartType={data.categoryChart ?? 'bar'}
+            valueLabel={data.trendValueLabel ?? 'Value'}
+          />
         </Card>
       </div>
     </Card>
